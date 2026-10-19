@@ -37,7 +37,7 @@ requests from forks. In that mode c3x fetches no remote modules, reads no
 files, keeps local modules inside the scanned directory, and ignores
 anything in the repository's `.c3x.toml` that could redirect pricing,
 credentials or file access (only region, currency, format, budgets and an
-in-project usage file are honoured). Every parse is also bounded — at most
+in-project usage files are honoured). Every parse is also bounded — at most
 10,000 instances per resource, 200,000 resources, 5,000 module expansions
 and two minutes — so a hostile configuration fails fast instead of
 exhausting the machine. Those limits are checked between resources and
@@ -174,10 +174,47 @@ Pipelines, Azure Pipelines, Atlantis and Spacelift recipes.
 | `c3x recommend` | Suggests savings: right-sizing, cheaper families, unused resources |
 | `c3x policy eval` | Evaluates cost policies written in Rego |
 | `c3x pricing sync` | Warms the local price cache for fully offline runs |
+| `c3x usage sync` | Writes measured usage (GB stored, ...) from your cloud account's metrics; see [Usage](#usage-from-your-cloud-account) |
 | `c3x doctor` | Pre-flight checks, usable as a CI gate |
 | `c3x supported-resources` | Lists every supported resource kind |
 
 Full flag reference: [c3x.dev/docs/cli](https://c3x.dev/docs/cli).
+
+## Usage from your cloud account
+
+Requests, GB stored and similar usage-driven lines are $0 until someone
+writes a usage file. `c3x usage sync` measures them instead:
+
+```sh
+terraform show -json > state.json
+c3x usage sync --state state.json     # writes c3x-usage.synced.yml
+c3x estimate                          # reads it, no flags needed
+```
+
+**`pricing sync` is not `usage sync`.** `c3x pricing sync` warms the cache
+of *prices* (rates). `c3x usage sync` fetches *quantities* from your own
+account. Estimates never call a cloud API: only `usage sync` does, run by
+you, with your credentials, making read-only calls. It refuses to run in
+untrusted-input mode (`--no-remote-modules`), so a pull request from a fork
+cannot trigger calls with the runner's credentials. Credentials come from
+the AWS SDK's default chain (environment, shared config, SSO, instance or
+task role); `c3x doctor` checks them once a synced file is in use.
+
+It writes only the generated file, replacing it whole on every run, and
+never reads or writes your hand-written `usage_path` file, so a re-sync
+cannot overwrite an edit of yours. Pricing commands read both, and yours
+wins per resource and per key (see Configuration). Values it cannot
+establish are skipped and listed, in the output and under `errors:` in the
+file; `--strict` makes that an error exit. A run that measures nothing at
+all (no credentials, no `--state`, a missing permission) fails and leaves
+the existing file as it was, rather than replacing it with an empty one.
+
+Today: **AWS S3 bucket storage** (`standard_storage_gb`, from CloudWatch's
+daily `BucketSizeBytes`). It needs `cloudwatch:GetMetricData`, which AWS
+bills per metric requested. The real bucket name comes from `--state`;
+without it a literal name in the configuration is used. S3 requests,
+Lambda, NAT gateway, CloudFront and GCP follow; see
+[the design](docs/design/usage-sync.md) and ROADMAP section K.
 
 ## How much to trust a number
 
@@ -195,7 +232,7 @@ comment:
 |---|---|
 | `region_fallback` | No price for your region under the catalog's filters, so the reference region's (us-east-1, eastus, us-central1) is shown |
 | `no_price` | The lookup matched nothing, so a non-free resource shows $0 |
-| `usage_not_provided` | A usage-driven cost (requests, GB processed, LCUs) is $0 because no usage was given; supply it with `--usage` |
+| `usage_not_provided` | A usage-driven cost (requests, GB processed, LCUs) is $0 because no usage was given; supply it with `--usage`, or measure it with `c3x usage sync` |
 | `unresolved_attribute` | An attribute the price depends on could not be evaluated statically, so a default was used; a plan JSON input avoids this |
 | `assumed_count` | The resource's count or for_each (or its module's) is computed from a data source c3x cannot query, such as `data.aws_availability_zones`, so the number of instances rests on a placeholder (three zones in the provider's region); the caveat names the value assumed, and a plan JSON input gives the exact count |
 | `stale_price` | The pricing API was unreachable, so a cached price past its freshness window was used |
@@ -291,6 +328,7 @@ format = "markdown"
 budget = 1000.0              # same as --budget; --budget 0 overrides it
 budget_delta = 50.0          # same as --budget-delta on c3x diff
 usage_path = "c3x-usage.yml" # relative to this file; used by every command
+synced_usage_path = "c3x-usage.synced.yml" # generated usage; see below
 
 [pricing]
 endpoint = "https://pricing.c3x.dev/graphql"
@@ -299,6 +337,15 @@ endpoint = "https://pricing.c3x.dev/graphql"
 The other keys are `currency`, `offline`, `no_cache`, `cache_path`,
 `no_remote_modules`, and `pricing.token` (keep that one out of the
 repository). c3x warns about any key it doesn't recognise.
+
+Usage can come from two files. `usage_path` is the one you write.
+`synced_usage_path` is a generated snapshot (`c3x-usage.synced.yml`, picked
+up automatically when it sits next to `.c3x.toml`) with the same schema,
+which you never edit by hand. Every command that prices reads both, and
+your file wins per resource and per key: a value you write is never
+replaced by a generated one, and a generated value fills in what you
+leave out. A value measured for one resource beats a `defaults:` entry
+for its whole kind.
 
 Self-hosting the pricing API? Point `pricing.endpoint` at it and set
 `C3X_PRICING_TOKEN` if it runs with `API_KEY` enabled. See

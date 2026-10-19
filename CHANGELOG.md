@@ -6,8 +6,48 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Homebrew: the cask now clears the quarantine flag after install. Homebrew
+  quarantines what a cask downloads, and macOS killed the un-notarized
+  binary on launch (exit 137), so `brew install c3xdev/tap/c3x` gave a c3x
+  that would not start. The published cask was fixed for 0.3.20 directly.
+
+## [0.3.20] - 2026-10-16
+
+### Security
+
+- Release binaries are built with Go 1.27.2 (0.3.19 used 1.27.1, which has
+  `net/http`, `crypto/tls` and HTTP/2 vulnerabilities), and
+  `golang.org/x/text` is v0.39.0: v0.38.0 could loop forever on invalid
+  input reachable from HCL templates in Terragrunt files (GO-2026-5970).
+
 ### Added
 
+- `c3x usage sync` fills `c3x-usage.synced.yml` from your AWS account's
+  metrics, so usage-driven lines are no longer $0 for lack of a hand-written
+  usage file. It is separate from `c3x pricing sync`, which fetches prices;
+  this fetches quantities. The first resource is S3 storage
+  (`standard_storage_gb`, from CloudWatch `BucketSizeBytes`); S3 requests,
+  Lambda, NAT, CloudFront and GCP follow (ROADMAP K). Real bucket names come
+  from `--state` (`terraform show -json`), else a literal in configuration;
+  anything unresolved is skipped and listed, never guessed. Only this
+  command uses cloud credentials, read-only, and it refuses to run in
+  untrusted-input mode. It writes only the generated file and never touches
+  your hand-written one. `c3x doctor` checks AWS credentials once a synced
+  file is in use. (#97, design in #99)
+- Usage: a second, generated usage file. `synced_usage_path` in
+  `.c3x.toml` (or `C3X_SYNCED_USAGE_PATH`; default `c3x-usage.synced.yml`
+  next to `.c3x.toml` when that file exists) is applied under the
+  hand-written `usage_path`, which wins per resource and per key. Extra
+  top-level keys in the file (`synced`, `series`, `errors`) are ignored, so
+  older versions read it too.
+- Parser: `parser.ParseState` reads a Terraform state document
+  (`terraform show -json` with no plan argument), so resources carry the
+  identifiers state records, such as a bucket's real name. It is the
+  groundwork for `c3x usage sync` (#97); no command uses it yet. A plan or
+  a raw `terraform.tfstate` is rejected with an error rather than parsed to
+  nothing, and deposed objects are skipped so an address is one resource.
 - Catalog: `aws_keyspaces_table`, `aws_s3tables_table_bucket`,
   `aws_cloudfront_function`, `aws_ec2_transit_gateway_peering_attachment`
   and `aws_ami_copy` are priced, and 17 more AWS kinds are recognised as
