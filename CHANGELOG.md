@@ -6,7 +6,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.21] - 2026-10-23
+
+### Security
+
+- Release binaries are built with Go 1.27.3, which fixes GO-2026-6809:
+  `crypto/x509` trusted compromised intermediate certificates when
+  verifying TLS connections (pricing API, module and catalog downloads).
+  CI and the release workflow now pin the exact Go version, so a runner's
+  cached older patch release can't be used.
+
 ### Fixed
+
+- Module outputs are now evaluated (#116). An expression reading
+  `module.<name>.<output>` never resolved: a `count` or `for_each` built
+  from one dropped the block, and an attribute set from one was priced at
+  the catalog default. Each module call is now resolved before the
+  resources that read it, its `output` blocks are evaluated in its own
+  scope, and the values are in scope for module inputs, locals and
+  resources, including `module.x[0].out` under `count`,
+  `module.x["key"].out` under `for_each`, and outputs passed up through
+  nested modules. Outputs in `.tf.json` files are read too.
 
 - Homebrew: the cask now clears the quarantine flag after install. Homebrew
   quarantines what a cask downloads, and macOS killed the un-notarized
